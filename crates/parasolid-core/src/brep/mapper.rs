@@ -179,6 +179,21 @@ impl<'a> Mapper<'a> {
             ));
         }
 
+        // XT July 2022, section 2.1 pp11-12: an assembly is a distinct
+        // root kind. Collecting its BODY records does not apply its instances.
+        // Retain the raw records, but never report that flattened subset complete.
+        for node in self.nodes.values() {
+            if matches!(node.definition.name.as_str(), "ASSEMBLY" | "INSTANCE") {
+                let source = self.source(node);
+                push_diagnostic(&mut self.diagnostics, self.max_diagnostics,
+                    node.byte_range.start, BrepDiagnostic {
+                        code: "topology.unsupported_assembly",
+                        message: "XT assembly instances and placements are not mapped".to_owned(),
+                        role: "assembly", source,
+                    })?;
+            }
+        }
+
         let bodies = self
             .ordered_indices(&self.ids.bodies)
             .into_iter()
@@ -2334,6 +2349,24 @@ mod tests {
             field("geometric_owner", 141, vec![FieldValue::PointerIndex(0)]),
             field("sense", 0, vec![FieldValue::Character(b'+')]),
         ]
+    }
+
+    #[test]
+    fn assembly_records_cannot_silently_become_complete_body_collections() {
+        for name in ["ASSEMBLY", "INSTANCE"] {
+            let mut nodes = wire_acorn_nodes();
+            nodes.push(node(100, 999, name, vec![]));
+            let model = Mapper::new(BrepSourceFormat::Binary, "SCH_TEST", &nodes,
+                RoleAccess::Named).map().unwrap();
+            assert!(!model.complete);
+            assert_eq!(model.diagnostics[0].code, "topology.unsupported_assembly");
+            assert_eq!(model.bodies.len(), 1);
+        }
+        let mut nodes = wire_acorn_nodes();
+        nodes.push(node(100, 999, "ASSEMBLY", vec![]));
+        nodes.push(node(101, 999, "INSTANCE", vec![]));
+        assert!(Mapper::new(BrepSourceFormat::Binary, "SCH_TEST", &nodes,
+            RoleAccess::Named).with_max_diagnostics(1).map().is_err());
     }
 
     fn wire_acorn_nodes() -> Vec<RawNode> {
