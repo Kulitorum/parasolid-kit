@@ -756,6 +756,16 @@ impl<'a> Mapper<'a> {
         });
         let (start_kind, start_term_use, start_points) = start_limit?;
         let (end_kind, end_term_use, end_points) = end_limit?;
+        if self.field(chart, "hvec")?.values.len() > chart_points.len() {
+            // A retained storage tail must not become another part of the
+            // curve: independently verify both ends against the native LIMITs.
+            let first = start_points.last().expect("validated LIMIT arity");
+            let last = end_points.last().expect("validated LIMIT arity");
+            if chart_points.first() != Some(first) || chart_points.last() != Some(last) {
+                return Err(self.invalid_geometry(chart, "hvec",
+                    "logical chart endpoints disagree with limits in oversized storage"));
+            }
+        }
         let surface_indices = self.pointer_array(node, "surface")?;
         if surface_indices.len() != 2 {
             return Err(self.invalid_field(
@@ -807,11 +817,15 @@ impl<'a> Mapper<'a> {
         count: usize,
     ) -> Result<Vec<Vector3>, ParseError> {
         let values = &self.field(node, "hvec")?.values;
-        if count == 0 || values.len() != count {
+        // chart_count is the logical array length (XT July 2022 p45).
+        // Some native streams retain extra allocated hvec slots. LIMIT has no
+        // separate logical count and must still match its type's exact arity.
+        if count == 0 || values.len() < count ||
+            (self.roles.type_name(node) != "CHART" && values.len() != count) {
             return Err(self.invalid_geometry(node, "hvec", "intersection point count mismatch"));
         }
         values
-            .iter()
+            .iter().take(count)
             .map(|value| match value {
                 FieldValue::IntersectionPoint([Some(x), Some(y), Some(z)])
                     if x.is_finite() && y.is_finite() && z.is_finite() =>
@@ -3192,6 +3206,21 @@ mod tests {
                 assert_eq!(start_points[0].x, -1.0);
             }
         }
+    }
+
+    #[test]
+    fn chart_logical_length_retains_raw_capacity_and_rejects_short_storage() {
+        let point = |x| FieldValue::IntersectionPoint([Some(x), Some(0.0), Some(0.0)]);
+        let nodes = vec![node(1, 40, "CHART", vec![field("hvec", 0,
+            vec![point(0.0), point(1.0), point(99.0)])]),
+            node(2, 41, "LIMIT", vec![field("hvec", 0, vec![point(0.0), point(1.0)])])];
+        let mapper = Mapper::new(BrepSourceFormat::Binary, "SCH_TEST", &nodes, RoleAccess::Named);
+        let points = mapper.intersection_points(&nodes[0], 2).unwrap();
+        assert_eq!(points.len(), 2); assert_eq!(points[1].x, 1.0);
+        assert_eq!(nodes[0].fields[0].values.len(), 3);
+        assert!(mapper.intersection_points(&nodes[0], 4).is_err());
+        assert!(mapper.intersection_points(&nodes[0], 0).is_err());
+        assert!(mapper.intersection_points(&nodes[1], 1).is_err());
     }
 
     #[test]
