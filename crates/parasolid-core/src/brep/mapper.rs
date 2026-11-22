@@ -861,9 +861,13 @@ impl<'a> Mapper<'a> {
         let rational = self.logical(nurbs, "rational")?;
         let periodic = self.logical(nurbs, "periodic")?;
         let closed = self.logical(nurbs, "closed")?;
+        // Some saved UV bases carry contradictory periodic/closed metadata.
+        // Preserve both flags and every coefficient. The geometry adapter must
+        // verify actual closure and periodic reparameterization before use.
+        // Keep the existing semantic rejection for ordinary 3D curves.
         if control_count <= u32::from(degree)
             || !(if rational { 3..=4 } else { 2..=3 }).contains(&vertex_dimension)
-            || (periodic && !closed)
+            || (periodic && !closed && vertex_dimension != if rational { 3 } else { 2 })
         {
             return Err(self.invalid_geometry(
                 nurbs,
@@ -3006,5 +3010,58 @@ mod tests {
                 expected_type: "REGION",
             })
         );
+    }
+
+    #[test]
+    fn preserves_uv_periodicity_flags_without_relabeling_closure() {
+        for (dimension, rational, accepted) in
+            [(2, false, true), (3, true, true), (3, false, false), (4, true, false)]
+        {
+            let mut owner = common_curve_fields(0);
+            owner.push(field("nurbs", 136, vec![FieldValue::PointerIndex(2)]));
+            let mut coordinates = Vec::new();
+            for point in [0.0, 1.0, 0.0] {
+                for axis in 0..dimension {
+                    coordinates.push(FieldValue::Double(Some(
+                        if rational && axis == dimension - 1 { 1.0 } else { point },
+                    )));
+                }
+            }
+            let nodes = vec![
+                node(1, 134, "B_CURVE", owner),
+                node(2, 136, "NURBS_CURVE", vec![
+                    field("degree", 0, vec![FieldValue::ShortInteger(Some(2))]),
+                    field("n_vertices", 0, vec![FieldValue::Integer(Some(3))]),
+                    field("vertex_dim", 0, vec![FieldValue::ShortInteger(Some(dimension))]),
+                    field("n_knots", 0, vec![FieldValue::Integer(Some(2))]),
+                    field("knot_type", 0, vec![FieldValue::UnsignedByte(1)]),
+                    field("periodic", 0, vec![FieldValue::Logical(true)]),
+                    field("closed", 0, vec![FieldValue::Logical(false)]),
+                    field("rational", 0, vec![FieldValue::Logical(rational)]),
+                    field("curve_form", 0, vec![FieldValue::UnsignedByte(1)]),
+                    field("bspline_vertices", 45, vec![FieldValue::PointerIndex(3)]),
+                    field("knot_mult", 127, vec![FieldValue::PointerIndex(4)]),
+                    field("knots", 128, vec![FieldValue::PointerIndex(5)]),
+                ]),
+                node(3, 45, "BSPLINE_VERTICES", vec![field("vertices", 0, coordinates)]),
+                node(4, 127, "KNOT_MULT", vec![field("mult", 0, vec![
+                    FieldValue::ShortInteger(Some(3)), FieldValue::ShortInteger(Some(3)),
+                ])]),
+                node(5, 128, "KNOT_SET", vec![field("knots", 0, vec![
+                    FieldValue::Double(Some(0.0)), FieldValue::Double(Some(1.0)),
+                ])]),
+            ];
+            let mapper = Mapper::new(BrepSourceFormat::Binary, "SCH_TEST", &nodes, RoleAccess::Named);
+            let mapped = mapper.nurbs_curve(&nodes[0]);
+            assert_eq!(mapped.is_ok(), accepted);
+            if let Ok(curve) = mapped {
+                assert!(curve.periodic);
+                assert!(!curve.closed);
+                assert_eq!(curve.vertex_dimension, dimension as u16);
+                assert_eq!(curve.control_vertices.len(), 3);
+                assert_eq!(curve.knots, vec![0.0, 1.0]);
+                assert_eq!(curve.knot_multiplicities, vec![3, 3]);
+            }
+        }
     }
 }
