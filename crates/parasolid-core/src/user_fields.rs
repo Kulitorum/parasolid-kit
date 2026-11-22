@@ -2,9 +2,9 @@
 
 use crate::{ErrorDetails, ErrorKind, ParseError};
 
-// Source: Siemens, Parasolid XT Format Reference, April 2008, printed pp. 4,
-// 14, 116-118 ("Visible at PK", NOT "Has node-id"):
-// https://ww3.cad.de/foren/ubb/uploads/schulze/XT_Format_April_2008_tcm73-62642.pdf
+// Source: Siemens, Parasolid XT Format Reference, July 2022, section 6.1,
+// PDF pp117-119 ("Visible at PK", NOT "Has Node-ID").
+// parasolid://documents/parasolid-xt-2022/pages/117
 // These are public numeric type/visibility facts, not schema field layouts.
 // Absence from the table does not establish invisibility. In particular the
 // research targets 110/111/112 remain unknown here, even with an exact catalog.
@@ -28,7 +28,10 @@ fn documented_pk_visibility(node_type: u16) -> Option<bool> {
         | 130
         | 133
         | 134
-        | 137 => Some(true),
+        | 137
+        | 200
+        | 201
+        | 222 => Some(true),
         40
         | 41
         | 45
@@ -48,7 +51,16 @@ fn documented_pk_visibility(node_type: u16) -> Option<bool> {
         | 136
         | 141
         | 163
-        | 184 => Some(false),
+        | 176
+        | 184
+        | 185
+        | 189..=193
+        | 204..=213
+        | 220
+        | 221
+        | 223
+        | 224
+        | 229 => Some(false),
         _ => None,
     }
 }
@@ -110,5 +122,18 @@ mod tests {
             assert_eq!(word_count(node_type, 16, 0, 1), Ok(0));
         }
         assert!(word_count(12, 2, 0, 1).is_err());
+    }
+
+    #[test]
+    fn frames_additional_nodes_documented_in_july_2022() {
+        for node_type in [200, 201, 222] {
+            assert_eq!(word_count(node_type, 3, 0, 16), Ok(3));
+        }
+        for node_type in [176, 185, 189, 190, 191, 192, 193, 204, 205, 206,
+            207, 208, 209, 210, 211, 212, 213, 220, 221, 223, 224, 229] {
+            assert_eq!(word_count(node_type, 3, 0, 1), Ok(0));
+        }
+        assert!(word_count(194, 3, 0, 16).is_err());
+        assert!(word_count(202, 3, 0, 16).is_err());
     }
 }
