@@ -569,6 +569,32 @@ impl<'a> Mapper<'a> {
                     )?,
                 }
             }
+            "SPUN_SURF" => SurfaceKind::Spun {
+                profile_curve: self.required_id(
+                    node,
+                    "profile",
+                    "curve geometry",
+                    &self.ids.curves,
+                )?,
+                base: self.vector(node, "base")?,
+                axis: self.vector(node, "axis")?,
+                start: self.optional_vector(node, "start")?,
+                end: self.optional_vector(node, "end")?,
+                start_parameter: self.optional_double(node, "start_param")?,
+                end_parameter: self.optional_double(node, "end_param")?,
+                x_axis: self.optional_vector(node, "x_axis")?,
+                scale: self.optional_double(node, "scale")?,
+            },
+            "SWEPT_SURF" => SurfaceKind::Swept {
+                section_curve: self.required_id(
+                    node,
+                    "section",
+                    "curve geometry",
+                    &self.ids.curves,
+                )?,
+                sweep: self.vector(node, "sweep")?,
+                scale: self.optional_double(node, "scale")?,
+            },
             "OFFSET_SURF" => SurfaceKind::Offset {
                 basis_surface: self.required_id(
                     node,
@@ -1777,6 +1803,21 @@ impl<'a> Mapper<'a> {
         Ok(value)
     }
 
+    fn optional_vector(
+        &self,
+        node: &RawNode,
+        field: &'static str,
+    ) -> Result<Option<Vector3>, ParseError> {
+        if matches!(
+            self.value(node, field)?,
+            FieldValue::Vector([None, None, None])
+        ) {
+            Ok(None)
+        } else {
+            self.vector(node, field).map(Some)
+        }
+    }
+
     fn vector(&self, node: &RawNode, field: &'static str) -> Result<Vector3, ParseError> {
         let (FieldValue::Vector(values) | FieldValue::IntersectionPoint(values)) =
             self.value(node, field)?
@@ -2709,6 +2750,147 @@ mod tests {
 
         assert_eq!(mapper.sense(&nodes[0], "sense"), Ok(Sense::Unknown));
         assert_eq!(Sense::Unknown.multiplier(), None);
+    }
+
+    #[test]
+    fn maps_spun_profile_and_retains_optional_degeneracy_metadata() {
+        let mut fields = common_surface_fields(0);
+        fields.extend([
+            field("profile", 1008, vec![FieldValue::PointerIndex(1)]),
+            field(
+                "base",
+                0,
+                vec![FieldValue::Vector([Some(1.), Some(2.), Some(3.)])],
+            ),
+            field(
+                "axis",
+                0,
+                vec![FieldValue::Vector([Some(0.), Some(0.), Some(-1.)])],
+            ),
+            field("start", 0, vec![FieldValue::Vector([None, None, None])]),
+            field(
+                "end",
+                0,
+                vec![FieldValue::Vector([Some(1.), Some(2.), Some(4.)])],
+            ),
+            field("start_param", 0, vec![FieldValue::Double(None)]),
+            field("end_param", 0, vec![FieldValue::Double(Some(-0.5))]),
+            field("x_axis", 0, vec![FieldValue::Vector([None, None, None])]),
+            field("scale", 0, vec![FieldValue::Double(Some(1172.))]),
+        ]);
+        let nodes = [
+            node(1, 30, "LINE", common_curve_fields(0)),
+            node(2, 57, "SPUN_SURF", fields),
+        ];
+        let mut mapper = Mapper::new(
+            BrepSourceFormat::Binary,
+            "SCH_TEST",
+            &nodes,
+            RoleAccess::Named,
+        );
+        let surface = mapper.map_surface(2).expect("valid spun fields");
+        assert_eq!(
+            surface.kind,
+            SurfaceKind::Spun {
+                profile_curve: 0,
+                base: Vector3 {
+                    x: 1.,
+                    y: 2.,
+                    z: 3.
+                },
+                axis: Vector3 {
+                    x: 0.,
+                    y: 0.,
+                    z: -1.
+                },
+                start: None,
+                end: Some(Vector3 {
+                    x: 1.,
+                    y: 2.,
+                    z: 4.
+                }),
+                start_parameter: None,
+                end_parameter: Some(-0.5),
+                x_axis: None,
+                scale: Some(1172.),
+            }
+        );
+        assert_eq!(surface.source.node_index, 2);
+        assert!(mapper.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn optional_vector_distinguishes_null_from_malformed_components() {
+        for (values, accepted) in [
+            ([None, None, None], true),
+            ([Some(1.), None, Some(0.)], false),
+            ([Some(f64::NAN), Some(0.), Some(0.)], false),
+        ] {
+            let nodes = [node(
+                1,
+                57,
+                "SPUN_SURF",
+                vec![field("start", 0, vec![FieldValue::Vector(values)])],
+            )];
+            let mapper = Mapper::new(
+                BrepSourceFormat::Binary,
+                "SCH_TEST",
+                &nodes,
+                RoleAccess::Named,
+            );
+            assert_eq!(mapper.optional_vector(&nodes[0], "start").is_ok(), accepted);
+        }
+    }
+
+    #[test]
+    fn maps_swept_section_reference_direction_and_optional_internal_scale() {
+        for scale in [None, Some(1172.0)] {
+            for section in [1, 99] {
+                let mut fields = common_surface_fields(0);
+                fields.extend([
+                    field("section", 1008, vec![FieldValue::PointerIndex(section)]),
+                    field(
+                        "sweep",
+                        0,
+                        vec![FieldValue::Vector([Some(0.), Some(0.), Some(-1.)])],
+                    ),
+                    field("scale", 0, vec![FieldValue::Double(scale)]),
+                ]);
+                let nodes = [
+                    node(1, 30, "LINE", common_curve_fields(0)),
+                    node(2, 60, "SWEPT_SURF", fields),
+                ];
+                let mut mapper = Mapper::new(
+                    BrepSourceFormat::Binary,
+                    "SCH_TEST",
+                    &nodes,
+                    RoleAccess::Named,
+                );
+                let result = mapper.map_surface(2);
+                if section == 1 {
+                    let mapped = result.expect("valid section reference");
+                    assert_eq!(
+                        mapped.kind,
+                        SurfaceKind::Swept {
+                            section_curve: 0,
+                            sweep: Vector3 {
+                                x: 0.,
+                                y: 0.,
+                                z: -1.
+                            },
+                            scale,
+                        }
+                    );
+                    assert_eq!(mapped.source.node_index, 2);
+                    assert!(mapper.diagnostics.is_empty());
+                } else {
+                    assert_eq!(
+                        result.err().map(|e| e.kind()),
+                        Some(ErrorKind::InvalidBrepReference)
+                    );
+                }
+            }
+        }
     }
 
     #[test]

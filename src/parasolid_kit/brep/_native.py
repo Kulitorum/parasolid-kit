@@ -23,6 +23,8 @@ from .geometry import (
     LineCurve,
     NurbsCurve,
     NurbsSurface,
+    SpunSurface,
+    SweptSurface,
     OffsetSurface,
     ParabolaCurve,
     PlaneSurface,
@@ -395,6 +397,21 @@ def _surface_definition(kind: SurfaceKind, value: Mapping[str, Any]) -> SurfaceD
         return BlendBoundarySurface(
             boundary_index=_int(value, "boundary_index"),
             blend_surface=_int(value, "blend_surface"),
+        )
+    if kind is SurfaceKind.SPUN:
+        return SpunSurface(
+            profile_curve=_int(value, "profile_curve"), base=_vector(value, "base"), axis=_vector(value, "axis"),
+            start=None if value.get("start") is None else _vector(value, "start"),
+            end=None if value.get("end") is None else _vector(value, "end"),
+            start_parameter=_optional_float(value, "start_parameter"),
+            end_parameter=_optional_float(value, "end_parameter"),
+            x_axis=None if value.get("x_axis") is None else _vector(value, "x_axis"),
+            scale=_optional_float(value, "scale"),
+        )
+    if kind is SurfaceKind.SWEPT:
+        return SweptSurface(
+            section_curve=_int(value, "section_curve"), sweep=_vector(value, "sweep"),
+            scale=None if value.get("scale") is None else _float(value, "scale"),
         )
     if kind is SurfaceKind.OFFSET:
         return OffsetSurface(

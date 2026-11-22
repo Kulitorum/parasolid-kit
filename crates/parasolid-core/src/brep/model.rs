@@ -564,6 +564,24 @@ pub enum SurfaceKind {
         boundary_index: u8,
         blend_surface: BrepId,
     },
+    /// Linear extrusion of a section curve; scale is internal metadata.
+    Swept {
+        section_curve: BrepId,
+        sweep: Vector3,
+        scale: Option<f64>,
+    },
+    /// Revolution of a profile, with native degeneracy bounds and internal metadata.
+    Spun {
+        profile_curve: BrepId,
+        base: Vector3,
+        axis: Vector3,
+        start: Option<Vector3>,
+        end: Option<Vector3>,
+        start_parameter: Option<f64>,
+        end_parameter: Option<f64>,
+        x_axis: Option<Vector3>,
+        scale: Option<f64>,
+    },
     /// Offset of another mapped surface.
     Offset { basis_surface: BrepId, offset: f64 },
     /// Exact NURBS definition assembled from auxiliary nodes.
@@ -584,6 +602,8 @@ impl SurfaceKind {
             Self::Torus { .. } => "torus",
             Self::BlendedEdge { .. } => "blended_edge",
             Self::BlendBoundary { .. } => "blend_boundary",
+            Self::Swept { .. } => "swept",
+            Self::Spun { .. } => "spun",
             Self::Offset { .. } => "offset",
             Self::Nurbs(_) => "nurbs",
             Self::Unsupported { .. } => "unsupported",

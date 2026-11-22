@@ -34,6 +34,8 @@ class SurfaceKind(str, Enum):
     TORUS = "torus"
     BLENDED_EDGE = "blended_edge"
     BLEND_BOUNDARY = "blend_boundary"
+    SWEPT = "swept"
+    SPUN = "spun"
     OFFSET = "offset"
     NURBS = "nurbs"
     UNSUPPORTED = "unsupported"
@@ -239,6 +241,26 @@ class BlendBoundarySurface:
 
 
 @dataclass(frozen=True, slots=True)
+class SpunSurface:
+    profile_curve: int
+    base: Vector3
+    axis: Vector3
+    start: Vector3 | None
+    end: Vector3 | None
+    start_parameter: float | None
+    end_parameter: float | None
+    x_axis: Vector3 | None
+    scale: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class SweptSurface:
+    section_curve: int
+    sweep: Vector3
+    scale: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class OffsetSurface:
     basis_surface: int
     offset: float
@@ -275,6 +297,8 @@ SurfaceDefinition: TypeAlias = (
     | TorusSurface
     | BlendedEdgeSurface
     | BlendBoundarySurface
+    | SpunSurface
+    | SweptSurface
     | OffsetSurface
     | NurbsSurface
     | UnsupportedGeometry

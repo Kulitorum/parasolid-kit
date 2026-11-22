@@ -16,6 +16,8 @@ from ...brep.geometry import (
     LineCurve,
     NurbsCurve,
     NurbsSurface,
+    SpunSurface,
+    SweptSurface,
     OffsetSurface,
     ParabolaCurve,
     PlaneSurface,
@@ -420,9 +422,14 @@ class GeometryFactory:
 
         if curve.vertex_dimension != 2 or curve.rational or curve.periodic or curve.closed:
             raise ValueError("parameter curves require open nonrational 2D NURBS")
-        if isinstance(surface, PlaneSurface):
+        if isinstance(surface, SpunSurface):
+            # Reversed revolution axis: (Uocc,Vocc)=(-v_native,u_native).
+            from dataclasses import replace
+            curve=replace(curve,control_vertices=tuple((-v,u) for u,v in curve.control_vertices))
+            u_scale, v_scale = 1.0, 1.0
+        elif isinstance(surface, PlaneSurface):
             u_scale, v_scale = self.scale, self.scale
-        elif isinstance(surface, (CylinderSurface, ConeSurface)):
+        elif isinstance(surface, (CylinderSurface, ConeSurface, SweptSurface)):
             u_scale, v_scale = 1.0, self.scale
         elif isinstance(surface, (SphereSurface, TorusSurface, NurbsSurface)):
             u_scale, v_scale = 1.0, 1.0
@@ -455,6 +462,44 @@ class GeometryFactory:
             minor,
         )
         return Geom_SurfaceOfRevolution(circle, gp_Ax1(center, gp_Dir(z)))
+
+    def spun_surface(self, definition: SpunSurface, profile: object, tolerance: float) -> object:
+        """Preserve the XT normal with a reversed axis and the UV map (-v,u)."""
+        from OCP.Geom import Geom_SurfaceOfRevolution, Geom_TrimmedCurve
+        from OCP.gp import gp_Ax1, gp_Dir, gp_Vec
+
+        axis=tuple(definition.axis)
+        if not all(isfinite(x) for x in axis) or abs(sum(x*x for x in axis)-1.)>1.e-12:
+            raise ValueError("spun surface axis must be a unit vector")
+        base=self.point(definition.base)
+        low,high=profile.FirstParameter(),profile.LastParameter()
+        for endpoint,parameter,is_low in [(definition.start,definition.start_parameter,True),
+                                           (definition.end,definition.end_parameter,False)]:
+            if (endpoint is None)!=(parameter is None):
+                raise ValueError("spun degeneracy requires both a point and parameter")
+            if parameter is None:continue
+            if not isfinite(parameter) or (not profile.IsPeriodic() and (parameter<low or parameter>high)):
+                raise ValueError("spun degeneracy parameter is outside the profile")
+            point=self.point(endpoint)
+            delta=gp_Vec(base,point);radial=delta.Crossed(gp_Vec(*axis))
+            if profile.Value(parameter).Distance(point)>tolerance or radial.Magnitude()>tolerance:
+                raise ValueError("spun degeneracy does not match its profile and axis")
+            if is_low:low=parameter
+            else:high=parameter
+        if not low<high:raise ValueError("spun profile interval is empty")
+        if low!=profile.FirstParameter() or high!=profile.LastParameter():
+            profile=Geom_TrimmedCurve(profile,low,high,True,False)
+        return Geom_SurfaceOfRevolution(profile,gp_Ax1(base,gp_Dir(*(-x for x in axis))))
+
+    def swept_surface(self, definition: SweptSurface, section: object) -> object:
+        """XT R(u,v)=C(u)+vD; internal scale metadata does not alter geometry."""
+        from OCP.Geom import Geom_SurfaceOfLinearExtrusion
+        from OCP.gp import gp_Dir
+
+        direction = tuple(definition.sweep)
+        if not all(isfinite(x) for x in direction) or abs(sum(x*x for x in direction)-1.) > 1.e-12:
+            raise ValueError("swept surface direction must be a unit vector")
+        return Geom_SurfaceOfLinearExtrusion(section, gp_Dir(*direction))
 
     def surface3d(
         self,

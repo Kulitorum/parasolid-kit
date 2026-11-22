@@ -13,6 +13,8 @@ from ...brep.geometry import (
     EllipseCurve,
     LineCurve,
     NurbsSurface,
+    SpunSurface,
+    SweptSurface,
     OffsetSurface,
     PlaneSurface,
     SphereSurface,
@@ -722,10 +724,28 @@ class TopologyBuilder:
             raise ValueError(f"surface basis {surface_id} is missing")
         self._resolving_surfaces.add(surface_id)
         try:
-            result = self.geometry.surface3d(
-                surface.definition,
-                resolve_basis=self._surface_geometry,
-            )
+            if isinstance(surface.definition, SpunSurface):
+                from ...brep.geometry import NurbsCurve, CircleCurve, EllipseCurve
+                definition=surface.definition
+                if not isinstance(self.curves[definition.profile_curve].definition,(NurbsCurve,CircleCurve,EllipseCurve)):
+                    raise ValueError("spun surface profile requires a supported parameter basis")
+                result=self.geometry.spun_surface(definition,self._curve_geometry(definition.profile_curve),self.precision)
+                self.operations.append("exact_revolution_surface")
+            elif isinstance(surface.definition, SweptSurface):
+                from ...brep.geometry import NurbsCurve, CircleCurve, EllipseCurve
+                definition = surface.definition
+                section = self.curves[definition.section_curve].definition
+                if not isinstance(section, (NurbsCurve, CircleCurve, EllipseCurve)):
+                    raise ValueError("swept surface section requires a supported parameter basis")
+                result = self.geometry.swept_surface(
+                    definition, self._curve_geometry(definition.section_curve)
+                )
+                self.operations.append("exact_linear_extrusion_surface")
+            else:
+                result = self.geometry.surface3d(
+                    surface.definition,
+                    resolve_basis=self._surface_geometry,
+                )
         finally:
             self._resolving_surfaces.remove(surface_id)
         self.surface_geometries[surface_id] = result

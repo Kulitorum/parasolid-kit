@@ -570,6 +570,36 @@ fn surface_kind_to_python<'py>(
             value.set_item("boundary_index", boundary_index)?;
             value.set_item("blend_surface", blend_surface)?;
         }
+        SurfaceKind::Spun {
+            profile_curve,
+            base,
+            axis,
+            start,
+            end,
+            start_parameter,
+            end_parameter,
+            x_axis,
+            scale,
+        } => {
+            value.set_item("profile_curve", profile_curve)?;
+            value.set_item("base", vector_tuple(*base))?;
+            value.set_item("axis", vector_tuple(*axis))?;
+            value.set_item("start", start.map(vector_tuple))?;
+            value.set_item("end", end.map(vector_tuple))?;
+            value.set_item("start_parameter", start_parameter)?;
+            value.set_item("end_parameter", end_parameter)?;
+            value.set_item("x_axis", x_axis.map(vector_tuple))?;
+            value.set_item("scale", scale)?;
+        }
+        SurfaceKind::Swept {
+            section_curve,
+            sweep,
+            scale,
+        } => {
+            value.set_item("section_curve", section_curve)?;
+            value.set_item("sweep", vector_tuple(*sweep))?;
+            value.set_item("scale", scale)?;
+        }
         SurfaceKind::Offset {
             basis_surface,
             offset,

@@ -19,6 +19,8 @@ from ...brep.geometry import (
     LineCurve,
     NurbsCurve,
     NurbsSurface,
+    SpunSurface,
+    SweptSurface,
     OffsetSurface,
     ParabolaCurve,
     PlaneSurface,
@@ -432,7 +434,7 @@ def _preflight_diagnostics(context: _ConversionContext) -> list[Diagnostic]:
 
 
 def _uses_parametric_topology(model: BrepModel) -> bool:
-    return any(
+    return any(isinstance(surface.definition, (SweptSurface, SpunSurface)) for surface in model.surfaces) or any(
         isinstance(curve.definition, (SurfaceParametricCurve, IntersectionCurve))
         for curve in model.curves
     )
@@ -704,6 +706,8 @@ def _supported_surface_definition(kind: SurfaceKind, definition: object) -> bool
                 (SurfaceKind.SPHERE, SphereSurface),
                 (SurfaceKind.TORUS, TorusSurface),
                 (SurfaceKind.NURBS, NurbsSurface),
+                (SurfaceKind.SWEPT, SweptSurface),
+                (SurfaceKind.SPUN, SpunSurface),
                 (SurfaceKind.OFFSET, OffsetSurface),
             )
         )
@@ -1128,6 +1132,10 @@ def _reference_diagnostics(context: _ConversionContext) -> list[Diagnostic]:
         definition = surface.definition
         if isinstance(definition, OffsetSurface):
             check("surface", surface.id, "surface", definition.basis_surface, surface.source)
+        elif isinstance(definition, SweptSurface):
+            check("surface", surface.id, "curve", definition.section_curve, surface.source)
+        elif isinstance(definition, SpunSurface):
+            check("surface", surface.id, "curve", definition.profile_curve, surface.source)
 
     return [
         _diagnostic(
