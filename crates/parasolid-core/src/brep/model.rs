@@ -440,12 +440,19 @@ pub enum CurveKind {
     Intersection {
         surfaces: [BrepId; 2],
         chart: SourceNodeRef,
+        /// Native parameter origin, scale and approximation estimates (XT 5.2.1.5).
+        chart_parameters: IntersectionChartParameters,
         /// Ordered source points used to identify the intersection branch, not a fitted curve.
         chart_points: Vec<Vector3>,
         start: SourceNodeRef,
+        start_kind: IntersectionLimitKind,
+        /// None means this effective schema did not transmit term_use.
+        start_term_use: Option<TerminatorSurface>,
         /// Source limit points: one ordinary point, or singularity then branch point.
         start_points: Vec<Vector3>,
         end: SourceNodeRef,
+        end_kind: IntersectionLimitKind,
+        end_term_use: Option<TerminatorSurface>,
         /// Source limit points in the same format as `start_points`.
         end_points: Vec<Vector3>,
         intersection_data: Option<SourceNodeRef>,
@@ -453,6 +460,21 @@ pub enum CurveKind {
     /// Geometry type retained without claiming semantic support.
     Unsupported { type_name: String },
 }
+
+/// CHART metadata; chord lengths use the original source length unit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IntersectionChartParameters {
+    pub base_parameter: f64,
+    pub base_scale: f64,
+    pub chordal_error: Option<f64>,
+    pub angular_error: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntersectionLimitKind { Help, Limit, Terminator }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminatorSurface { Unset, First, Second }
 
 impl CurveKind {
     /// Stable public variant name.

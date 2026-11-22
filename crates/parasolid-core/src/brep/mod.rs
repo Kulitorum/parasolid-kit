@@ -11,6 +11,7 @@ pub use mapper::{
 pub use model::{
     Body, BodyKind, BoundingBox, BrepDiagnostic, BrepId, BrepMetrics, BrepModel, BrepSourceFormat,
     CurveGeometry, CurveKind, Edge, Face, HalfEdge, Loop, NurbsCurve, NurbsSurface, PointGeometry,
+    IntersectionChartParameters, IntersectionLimitKind, TerminatorSurface,
     Region, RegionKind, Sense, Shell, SourceNodeRef, SurfaceGeometry, SurfaceKind,
     TopologyValidation, Vector3, Vertex,
 };

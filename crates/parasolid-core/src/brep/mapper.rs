@@ -10,6 +10,7 @@ use super::metrics::derive_metrics;
 use super::model::{
     BlendType, Body, BodyKind, BrepDiagnostic, BrepId, BrepMetrics, BrepModel, BrepSourceFormat,
     CurveGeometry, CurveKind, Edge, Face, HalfEdge, Loop, NurbsCurve, NurbsSurface, PointGeometry,
+    IntersectionChartParameters, IntersectionLimitKind, TerminatorSurface,
     Region, RegionKind, Sense, Shell, SourceNodeRef, SurfaceGeometry, SurfaceKind,
     TopologyValidation, Vector3, Vertex,
 };
@@ -705,18 +706,21 @@ impl<'a> Mapper<'a> {
 
     fn intersection_curve(&self, node: &RawNode) -> Result<CurveKind, ParseError> {
         let chart = self.required_typed_node(node, "chart", "CHART")?;
-        self.double(chart, "base_parameter")?;
-        self.double(chart, "base_scale")?;
-        self.optional_double(chart, "chordal_error")?;
-        self.optional_double(chart, "angular_error")?;
+        let chart_parameters = IntersectionChartParameters {
+            base_parameter: self.double(chart, "base_parameter")?,
+            base_scale: self.double(chart, "base_scale")?,
+            chordal_error: self.optional_double(chart, "chordal_error")?,
+            angular_error: self.optional_double(chart, "angular_error")?,
+        };
         let count = self.nonnegative_integer(chart, "chart_count")?;
         let chart_points =
             self.intersection_points(chart, usize::try_from(count).unwrap_or(usize::MAX))?;
-        let [start_points, end_points] = ["start", "end"].map(|field| {
+        let [start_limit, end_limit] = ["start", "end"].map(|field| {
             let limit = self.required_typed_node(node, field, "LIMIT")?;
-            let count = match self.character(limit, "type")? {
-                b'H' | b'L' => 1,
-                b'T' => 2,
+            let (kind, count) = match self.character(limit, "type")? {
+                b'H' => (IntersectionLimitKind::Help, 1),
+                b'L' => (IntersectionLimitKind::Limit, 1),
+                b'T' => (IntersectionLimitKind::Terminator, 2),
                 _ => {
                     return Err(self.invalid_geometry(
                         limit,
@@ -725,8 +729,18 @@ impl<'a> Mapper<'a> {
                     ));
                 }
             };
-            self.intersection_points(limit, count)
+            let term_use = if self.roles.field(limit, "term_use").is_some() {
+                Some(match self.character(limit, "term_use")? {
+                    b'?' => TerminatorSurface::Unset,
+                    b'F' => TerminatorSurface::First,
+                    b'S' => TerminatorSurface::Second,
+                    _ => return Err(self.invalid_geometry(limit, "term_use", "invalid terminator surface selection")),
+                })
+            } else { None };
+            Ok((kind, term_use, self.intersection_points(limit, count)?))
         });
+        let (start_kind, start_term_use, start_points) = start_limit?;
+        let (end_kind, end_term_use, end_points) = end_limit?;
         let surface_indices = self.pointer_array(node, "surface")?;
         if surface_indices.len() != 2 {
             return Err(self.invalid_field(
@@ -758,11 +772,16 @@ impl<'a> Mapper<'a> {
         Ok(CurveKind::Intersection {
             surfaces,
             chart: self.required_source(node, "chart")?,
+            chart_parameters,
             chart_points,
             start: self.required_source(node, "start")?,
-            start_points: start_points?,
+            start_kind,
+            start_term_use,
+            start_points,
             end: self.required_source(node, "end")?,
-            end_points: end_points?,
+            end_kind,
+            end_term_use,
+            end_points,
             intersection_data,
         })
     }
@@ -3015,6 +3034,55 @@ mod tests {
                 relationship: "region_body_inverse",
             })
         );
+    }
+
+    #[test]
+    fn preserves_native_intersection_parameterization_and_limit_selection() {
+        for term_use in [None, Some(b'?'), Some(b'F'), Some(b'S'), Some(b'X')] {
+            let point = |x| FieldValue::IntersectionPoint([Some(x), Some(0.0), Some(0.0)]);
+            let mut limit_fields = vec![field("type", 0, vec![FieldValue::Character(b'T')])];
+            if let Some(value) = term_use { limit_fields.push(field("term_use", 0, vec![FieldValue::Character(value)])); }
+            limit_fields.push(field("hvec", 0, vec![point(-1.0), point(0.0)]));
+            let nodes = vec![
+                node(1, 38, "INTERSECTION", vec![
+                    field("surface", 1006, vec![FieldValue::PointerIndex(5), FieldValue::PointerIndex(6)]),
+                    field("chart", 40, vec![FieldValue::PointerIndex(2)]),
+                    field("start", 41, vec![FieldValue::PointerIndex(3)]),
+                    field("end", 41, vec![FieldValue::PointerIndex(4)]),
+                ]),
+                node(2, 40, "CHART", vec![
+                    field("base_parameter", 0, vec![FieldValue::Double(Some(17.25))]),
+                    field("base_scale", 0, vec![FieldValue::Double(Some(3.5))]),
+                    field("chart_count", 0, vec![FieldValue::Integer(Some(2))]),
+                    field("chordal_error", 0, vec![FieldValue::Double(Some(0.001))]),
+                    field("angular_error", 0, vec![FieldValue::Double(None)]),
+                    field("hvec", 0, vec![point(0.0), point(1.0)]),
+                ]),
+                node(3, 41, "LIMIT", limit_fields),
+                node(4, 41, "LIMIT", vec![field("type", 0, vec![FieldValue::Character(b'L')]),
+                    field("hvec", 0, vec![point(1.0)])]),
+                node(5, 50, "PLANE", common_surface_fields(0)),
+                node(6, 51, "CYLINDER", common_surface_fields(0)),
+            ];
+            let mapper = Mapper::new(BrepSourceFormat::Binary, "SCH_TEST", &nodes, RoleAccess::Named);
+            let result = mapper.intersection_curve(&nodes[0]);
+            if term_use == Some(b'X') { assert!(result.is_err()); continue; }
+            assert!(result.is_ok(), "{result:?}");
+            if let Ok(CurveKind::Intersection { chart_parameters, start_kind, start_term_use,
+                end_kind, end_term_use, start_points, .. }) = result {
+                assert_eq!(chart_parameters.base_parameter, 17.25);
+                assert_eq!(chart_parameters.base_scale, 3.5);
+                assert_eq!(chart_parameters.chordal_error, Some(0.001));
+                assert_eq!(chart_parameters.angular_error, None);
+                assert_eq!(start_kind, IntersectionLimitKind::Terminator);
+                assert_eq!(end_kind, IntersectionLimitKind::Limit);
+                assert_eq!(start_term_use, match term_use { None => None, Some(b'F') => Some(TerminatorSurface::First),
+                    Some(b'S') => Some(TerminatorSurface::Second), _ => Some(TerminatorSurface::Unset) });
+                assert_eq!(end_term_use, None);
+                assert_eq!(start_points.len(), 2);
+                assert_eq!(start_points[0].x, -1.0);
+            }
+        }
     }
 
     #[test]
